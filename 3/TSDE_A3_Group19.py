@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from scipy.stats import norm
 from scipy.stats import gaussian_kde
 from statsmodels.tsa.stattools import adfuller
 
@@ -418,72 +417,119 @@ def partI_question3():
     
     stock_df = stock_df.set_index('Stock_ID')  
     print(stock_df)
+
+def cointegrationTestDecision(inputDecision):
+    if inputDecision == 'Reject the null':
+        return 'Zt ∼I(0): cointegration between {Yt} and {Xt}'
+    else:
+        return 'Zt ∼I(1): No-cointegration between {Yt} and {Xt}'
+    
+def performADFCointegrationTest(input_deltaResiduals, input_Zt_list):
+    # estimate the ADF regression model
+    max_p = 12  # maximum lags
+    hat_beta_list = []
+    hat_residuals_list = []
+    se_beta_list = []
+    aic_list = []
+
+    for iterateP in range(1, max_p+1):
+        matrix_X, estimate_phi, hat_y, hat_residuals = runRegressionModel_ADF(input_delta_y=input_deltaResiduals, 
+                                                                              input_y=input_Zt_list.squeeze(),
+                                                                              input_p=iterateP)
+        
+        estimate_SE = getStandardError(matrix_X, hat_residuals)
+        beta_SE = estimate_SE[0]
+        se_beta_list.append(beta_SE)
+
+        lengthOfSeries = len(hat_residuals)
+        k = iterateP + 1
+        hat_beta_list.append(estimate_phi.iloc[0,0])
+        hat_residuals_list.append(hat_residuals)
+        
+        this_aic = getAIC(lengthOfSeries, k, hat_residuals.squeeze())
+        aic_list.append(float(this_aic))
+    
+    min_aic, final_p = getBestP(aic_list)
+    final_beta = hat_beta_list[final_p - 1]
+    final_residuals = hat_residuals_list[final_p - 1]
+    final_se = se_beta_list[final_p - 1]
+        
+    # compute the ADF test statistic under the null
+    adf_statistic = (final_beta) / final_se
+    print(f'ADF test statistic: {round(adf_statistic,3)}')
+
+    # perform the ADF-Conintegration test
+    decision = adf_test(0.1, adf_statistic, False)
+    cointegrated = cointegrationTestDecision(decision)
+    print(f'Conclusion regarding cointegration at ⍺ = 10%: {decision} and {cointegrated}')
     
 def partI_question4():
     print('\nQuestion 4:')
-    # Q4
-    def ols_manual(y, X):
-        """OLS t-test R^2"""
-        X = np.asarray(X)
-        y = np.asarray(y)
-        beta = np.linalg.inv(X.T @ X) @ X.T @ y
-        yhat = X @ beta
-        resid = y - yhat
-        n = len(y)
-        k = X.shape[1]
-        SSR = resid.T @ resid
-        sigma2 = SSR / (n - k)
-        var_beta = sigma2 * np.linalg.inv(X.T @ X)
-        se = np.sqrt(np.diag(var_beta))
-        t = beta / se
-        R2 = 1 - SSR / ((y - y.mean()) ** 2).sum()
-        return {'beta': beta, 'se': se, 't': t, 'R2': R2, 'resid': resid, 'SSR': SSR}
+    
+    msft_stock = part1Data[['DATE','MICROSOFT']]
+    msft_stock = msft_stock.set_index('DATE')
+    xom_stock = part1Data[['DATE','EXXON_MOBIL']]
+    xom_stock = xom_stock.set_index('DATE')
+    
+    # perform a regression of Y_t on X_t
+    matrix_X, estimate_beta, hat_y, hat_residuals_z = runRegressionModel(msft_stock.squeeze(), xom_stock.squeeze())
+    alpha_hat, beta_hat = estimate_beta.iloc[0,0],  estimate_beta.iloc[1,0]
+    
+    # compute general test statistics
+    estimate_SE = getStandardError(matrix_X, hat_residuals_z)
+    t_statistic = estimate_beta.iat[1,0] / estimate_SE[1]
+    rSquare = getRSquare(hat_residuals_z.squeeze(), xom_stock.squeeze())
 
-    y = part1Data['MICROSOFT'].values
-    x = part1Data['EXXON_MOBIL'].values
-    X = np.column_stack((np.ones(len(x)), x))
-    res = ols_manual(y, X)
+    print('\nRegression Result: MICROSOFT on EXXON_MOBIL ---')
+    print(f'α̂ = {estimate_beta.iat[0,0]:.3f}')
+    print(f'β̂ = {estimate_beta.iat[1,0]:.3f}')
+    print(f't(β) = {t_statistic:.3f}')
+    print(f'R² = {rSquare:.3f}')
 
-    print("\n Regression Result: MICROSOFT on EXXON_MOBIL ---")
-    print(f"α̂ = {res['beta'][0]:.4f}")
-    print(f"β̂ = {res['beta'][1]:.4f}")
-    print(f"t(β) = {res['t'][1]:.2f}")
-    print(f"R² = {res['R2']:.3f}")
-
+    # plot the stock prices of MSFT and XOM
     graphTitle = 'Microsoft vs Exxon Mobil Stock Prices'
     fileName = '4_price_msft_xom'
     
+    plot_x = pd.to_datetime(msft_stock.index, dayfirst=True, format='%d/%m/%Y')
+    
     plt.figure(figsize=(10,5))
-    plt.plot(part1Data.index, part1Data['MICROSOFT'], label = 'Microsoft', color = 'steelblue')
-    plt.plot(part1Data.index, part1Data['EXXON_MOBIL'], label = 'Exxon Mobil', color = 'darkorange')
+    plt.plot(plot_x, msft_stock, label = 'Microsoft', color = 'steelblue')
+    plt.plot(plot_x, xom_stock, label = 'Exxon Mobil', color = 'darkorange')
     plt.title(graphTitle, fontweight='bold')
     plt.xlabel("Date")
     plt.ylabel("Price")
+    
+    # Set n-month ticks on the x-axis
+    plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    # Auto-format date labels (avoid overlapping)
+    plt.gcf().autofmt_xdate()
+    
     plt.legend()
-    plt.tight_layout()
     plt.savefig(f'../3/figures/{fileName}.jpeg', dpi=300)
     plt.show()
-
-    x = part1Data['EXXON_MOBIL'].values
-    y = part1Data['MICROSOFT'].values
-    X = np.column_stack((np.ones(len(x)), x))
-    res = ols_manual(y, X) 
-    yhat = X @ res['beta']
 
     graphTitle = 'Microsoft vs Exxon Mobil (Level Regression)'
     fileName = '4_scatter_msft_xom'
     
-    # Scatter Regression
-    plt.figure(figsize=(7,5))
-    plt.scatter(x, y, alpha=0.5, label="Observed")
-    plt.plot(x, yhat, color='red', label="Fitted line")
+    # plot the scatter plot with OLS regression line
+    plt.figure(figsize=(6,6))
+    plt.scatter(xom_stock.squeeze(), msft_stock.squeeze(), alpha=0.5, label="Observed")
+    plt.plot(xom_stock.squeeze(), hat_y.squeeze(), color='red', label="Fitted line")
     plt.title(graphTitle, fontweight='bold')
-    plt.xlabel("Exxon Mobil Stock Price")
-    plt.ylabel("Microsoft Stock Price")
+    plt.xlabel('Exxon Mobil Stock Price')
+    plt.ylabel('Microsoft Stock Price')
     plt.legend()
     plt.tight_layout()
     plt.savefig(f'../3/figures/{fileName}.jpeg', dpi=300)
     plt.show()
+
+    print(f'\nCointegration regression: MSFT = {alpha_hat: .3f} + {beta_hat: .3f} * XOM')
+    
+    # diﬀerencing of Z_t
+    differenceResiduals = np.diff(hat_residuals_z.squeeze())
+    
+    performADFCointegrationTest(input_deltaResiduals=differenceResiduals, input_Zt_list=hat_residuals_z)
     
 partI_question1()
 partI_question2()
@@ -533,12 +579,6 @@ def monteCarlo_Cointegrated(input_B, input_t, input_phi, input_corr):
         this_lambda_list.append(estimate_lambda)
     
     return this_beta_list, this_t_list, this_RSquare_list, this_lambda_list
-
-def cointegrationTest(inputDecision):
-    if inputDecision == 'Reject the null':
-        return 'Zt ∼I(0): cointegration between {Yt} and {Xt}'
-    else:
-        return 'Zt ∼I(1): No-cointegration between {Yt} and {Xt}'
 
 def partII_question1():
     time_list = [100, 500, 1000]
@@ -668,43 +708,7 @@ def partII_question3():
     # diﬀerencing of Z_t
     differenceResiduals = np.diff(hat_residuals_z.squeeze())
     
-    # estimate the ADF regression model
-    max_p = 12  # maximum lags
-    hat_beta_list = []
-    hat_residuals_list = []
-    se_beta_list = []
-    aic_list = []
-
-    for iterateP in range(1, max_p+1):
-        matrix_X, estimate_phi, hat_y, hat_residuals = runRegressionModel_ADF(input_delta_y=differenceResiduals, 
-                                                                              input_y=hat_residuals_z.squeeze(),
-                                                                              input_p=iterateP)
-        
-        estimate_SE = getStandardError(matrix_X, hat_residuals)
-        beta_SE = estimate_SE[0]
-        se_beta_list.append(beta_SE)
-
-        lengthOfSeries = len(hat_residuals)
-        k = iterateP + 1
-        hat_beta_list.append(estimate_phi.iloc[0,0])
-        hat_residuals_list.append(hat_residuals)
-        
-        this_aic = getAIC(lengthOfSeries, k, hat_residuals.squeeze())
-        aic_list.append(float(this_aic))
-    
-    min_aic, final_p = getBestP(aic_list)
-    final_beta = hat_beta_list[final_p - 1]
-    final_residuals = hat_residuals_list[final_p - 1]
-    final_se = se_beta_list[final_p - 1]
-        
-    # compute the ADF test statistic under the null
-    adf_statistic = (final_beta) / final_se
-    print(f'ADF test statistic: {round(adf_statistic,3)}')
-
-    # perform the ADF-Conintegration test
-    decision = adf_test(0.1, adf_statistic, False)
-    cointegrated = cointegrationTest(decision)
-    print(f'Conclusion regarding cointegration at the ⍺ = 10%: {decision} and {cointegrated}')
+    performADFCointegrationTest(input_deltaResiduals=differenceResiduals, input_Zt_list=hat_residuals_z)
 
 def partII_question4():
     print('\nQuestion 4:')
