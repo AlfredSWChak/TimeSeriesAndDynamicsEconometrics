@@ -9,6 +9,7 @@ from statsmodels.tsa.stattools import adfuller
 '''
 Part I: Spurious Regression and Unit Roots
 '''
+print('\nPart I: Spurious Regression and Unit Roots')
 
 # Question 1
 
@@ -31,6 +32,42 @@ def runRegressionModel(input_y, input_x):
     # print(vector_y)
     # convert y to matrix X
     matrix_X = pd.DataFrame({'intercept': 1, 'x': input_x})
+    
+    # calculate estimated beta by (X′ * X)^{−1} * X′* y
+    estimate_beta = getEstimatedBeta(matrix_X, vector_y)
+
+    # calculate estimated y by X * (estimated beta)
+    estimate_y = matrix_X @ estimate_beta
+    
+    # calculate the residuals
+    estimate_residuals = vector_y - estimate_y
+
+    return matrix_X, estimate_beta, estimate_y, estimate_residuals
+
+def runRegressionModel_ECM(input_y, input_x, input_z, input_p, input_q):
+    # convert y to matrix y
+    vector_y = pd.DataFrame(input_y[max(input_p, input_q):])
+    vector_y = vector_y.reset_index(drop=True)
+    # convert y to matrix X
+    matrix_X = generateMatrixX_ECM(input_y, input_x, input_z, input_p, input_q)
+    
+    # calculate estimated beta by (X′ * X)^{−1} * X′* y
+    estimate_beta = getEstimatedBeta(matrix_X, vector_y)
+
+    # calculate estimated y by X * (estimated beta)
+    estimate_y = matrix_X @ estimate_beta
+    
+    # calculate the residuals
+    residuals = vector_y - estimate_y
+
+    return matrix_X, estimate_beta, estimate_y, residuals
+
+def runRegressionModel_ADF(input_delta_y, input_y, input_p):
+    # convert y to matrix y
+    vector_y = pd.DataFrame(input_delta_y[input_p:])
+    vector_y = vector_y.reset_index(drop=True)
+    # convert y to matrix X
+    matrix_X = generateMatrixX_ADF(input_delta_y, input_y, input_p)
     
     # calculate estimated beta by (X′ * X)^{−1} * X′* y
     estimate_beta = getEstimatedBeta(matrix_X, vector_y)
@@ -183,17 +220,17 @@ def read_csv(filename) -> str:
 part1Data = read_csv('../3/data_tsde_assignment_3_part_1.csv')
 part2Data = read_csv('../3/data_tsde_assignment_3_part_2.csv')
 
-def samplePlot(input_sample, input_x, input_title, input_fileName):
-    plot_x = pd.to_datetime(input_x, dayfirst=True)
+def samplePlot(input_sample, input_x, input_interval, input_ylabel, input_title, input_fileName):
+    plot_x = pd.to_datetime(input_x, dayfirst=True, format='%d/%m/%Y')
     
-    plt.figure(figsize=(10,6))    
+    plt.figure(figsize=(13,5))    
     plt.plot(plot_x, input_sample, linewidth = 1, color = 'blue')
     plt.title(input_title, fontweight='bold')
     plt.xlabel('Time')
-    plt.ylabel('Daily Stock Price')    
+    plt.ylabel(input_ylabel)    
     
-    # Set 6-month ticks on the x-axis
-    plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+    # Set n-month ticks on the x-axis
+    plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval=input_interval))
     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
 
     # Auto-format date labels (avoid overlapping)
@@ -214,6 +251,7 @@ def sacf(input_data, input_lag, input_title, input_fileName):
     plt.figure(figsize=(10,6))
     plt.bar(lags, result, color='blue', edgecolor='black')
     plt.axhline(0, color='black', linestyle='--', linewidth=1)
+    plt.ylim(0.8, 1)
     plt.title(input_title, fontweight='bold')
     plt.xlabel('Lag')
     plt.ylabel('ACF')
@@ -230,11 +268,11 @@ def partI_question2():
 
     graphTitle = 'APPLE stock time series'
     fileName = '2_aapl'
-    samplePlot(aapl_stock, part1Data['DATE'], graphTitle, fileName)
+    samplePlot(aapl_stock, part1Data['DATE'], 6, 'Daily Stock Price', graphTitle, fileName)
 
     graphTitle = 'MICROSOFT stock time series'
     fileName = '2_msft'
-    samplePlot(msft_stock, part1Data['DATE'], graphTitle, fileName)
+    samplePlot(msft_stock, part1Data['DATE'], 6, 'Daily Stock Price', graphTitle, fileName)
 
     input_lags = 12
 
@@ -248,40 +286,56 @@ def partI_question2():
 
 # Question 3
 
-def generateMatrixX(input_y, p, boolean_intercept):
-    numberOfRows = len(input_y) - p
+def generateMatrixX_ADF(input_delta_y, input_y , p):
+    numberOfRows = len(input_delta_y) - p
     result_matrix = []
     
     for rowNumber in range(0,numberOfRows):
         row = []
         
-        if boolean_intercept == True:
-            row.append(1)
-        
-        for t in range(0, p):
-            row.append(input_y.iloc[p + rowNumber - t - 1])
+        # the first term X_t-1
+        row.append(input_y.iloc[p + rowNumber - 1])
+        # the following terms of ΔX_t-i
+        for t in range(0, p-1):
+            row.append(input_delta_y[p + rowNumber - t - 1])
     
         result_matrix.append(row)
      
     return pd.DataFrame(result_matrix)
 
-def runRegressionModel_AR(input_y, input_p):
-    # convert y to matrix y
-    vector_y = pd.DataFrame(input_y[input_p:])
-    vector_y = vector_y.reset_index(drop=True)
-    # convert y to matrix X
-    matrix_X = generateMatrixX(input_y, input_p, False)
+def generateMatrixX_ECM(input_y, input_x, input_z, p, q):
+    numberOfRows = min(len(input_y) - p, len(input_x) - q)
+    extra = max(q-p, 0)
+    result_matrix = []
     
-    # calculate estimated beta by (X′ * X)^{−1} * X′* y
-    estimate_beta = getEstimatedBeta(matrix_X, vector_y)
-
-    # calculate estimated y by X * (estimated beta)
-    estimate_y = matrix_X @ estimate_beta
+    for rowNumber in range(0,numberOfRows):
+        row = []
+        display_Row = []
+        row.append(input_z[extra + p + rowNumber - 1])
+        display_Row.append(extra + p + rowNumber - 1)
+        
+        for t in range(0, p):
+            row.append(input_y[extra + p + rowNumber - t - 1])
+            display_Row.append(extra + p + rowNumber - t - 1)
+            
+        for t in range(0, q):
+            row.append(input_x[extra + p + rowNumber - t - 1])
+            display_Row.append(extra + p + rowNumber - t - 1)
     
-    # calculate the residuals
-    estimate_residuals = vector_y - estimate_y
+        result_matrix.append(row)
+     
+    return pd.DataFrame(result_matrix)
 
-    return matrix_X, estimate_beta, estimate_y, estimate_residuals
+# compute Akaike information criterion
+def getAIC(t, k, residuals):
+    ssr_k = 0
+    
+    for res in residuals:
+        ssr_k += res ** 2
+    
+    aic = t * np.log(ssr_k/t) + k * 2
+    
+    return aic
 
 # compute Bayesian information criterion
 def getBIC(t, k, residuals):
@@ -316,6 +370,7 @@ def adf_test(input_alpha, input_adf, boolean_intercept):
         return result
 
 def partI_question3():
+    print('\nQuestion 3:')
     stock_list = part1Data.columns.tolist()
     stock_list.pop(0)
 
@@ -324,25 +379,28 @@ def partI_question3():
     for sNumber, stock in enumerate(stock_list):
         max_p = 12
         hat_beta_list = []
-        hat_residuals_list = []
         se_beta_list = []
+        hat_residuals_list = []
         bic_list = []
-
-        # print(f'{stock}:')
+        
+        differenceStockPrice = np.diff(part1Data[stock].squeeze())
 
         # estimate with a maximum p up to 12 lags
         for iterateP in range(1, max_p+1):
             # estimate an AR(p) model with intercept for the given data
-            matrix_X, hat_beta, hat_y, hat_residuals = runRegressionModel_AR(part1Data[stock], iterateP)
+            matrix_X, hat_beta, hat_y, hat_residuals = runRegressionModel_ADF(input_delta_y=differenceStockPrice, 
+                                                                              input_y=part1Data[stock].squeeze(),
+                                                                              input_p=iterateP)
             
             estimate_SE = getStandardError(matrix_X, hat_residuals)
-            se_beta_list.append(estimate_SE)
+            beta_SE = estimate_SE[0]
+            se_beta_list.append(beta_SE)
             
             lengthOfSeries = len(part1Data[stock])
             k = iterateP + 1
-            
             this_bic = getBIC(lengthOfSeries, k, hat_residuals.squeeze())
-            hat_beta_list.append(hat_beta)
+            
+            hat_beta_list.append(hat_beta.iloc[0,0])
             hat_residuals_list.append(hat_residuals)
             bic_list.append(float(this_bic))
 
@@ -351,25 +409,9 @@ def partI_question3():
         final_beta = hat_beta_list[final_p - 1]
         final_residuals = hat_residuals_list[final_p - 1]
         final_se = se_beta_list[final_p - 1]
-
-        # report the result of estimated coefficients
-        coef_df = pd.DataFrame()
-        coef_df['coef'] = final_beta
-        # print('The results of estimated coefficients for AR(p) model:')
-        # print(coef_df)
-
-        # report the result of BICs
-        p_df = pd.DataFrame()
-        p_df['BIC'] = bic_list
-        # print('The results of BIC for each AR(p):')
-        # print(p_df)
-
-        # print(f'The final estimate of (p) is {final_p} with the lowest value of the information criterion which is {min_bic}.')
         
         # compute the ADF test statistic under the null
-        adf_statistic = (np.sum(final_beta.squeeze()) - 1) / (np.sum(final_se))
-        # print(f'ADF test statistic: {adf_statistic}')
-
+        adf_statistic = (final_beta) / final_se
         decision = adf_test(0.1, adf_statistic, False)
         
         stock_df.loc[sNumber] = [stock, final_p, adf_statistic, decision]
@@ -377,13 +419,81 @@ def partI_question3():
     stock_df = stock_df.set_index('Stock_ID')  
     print(stock_df)
     
+def partI_question4():
+    print('\nQuestion 4:')
+    # Q4
+    def ols_manual(y, X):
+        """OLS t-test R^2"""
+        X = np.asarray(X)
+        y = np.asarray(y)
+        beta = np.linalg.inv(X.T @ X) @ X.T @ y
+        yhat = X @ beta
+        resid = y - yhat
+        n = len(y)
+        k = X.shape[1]
+        SSR = resid.T @ resid
+        sigma2 = SSR / (n - k)
+        var_beta = sigma2 * np.linalg.inv(X.T @ X)
+        se = np.sqrt(np.diag(var_beta))
+        t = beta / se
+        R2 = 1 - SSR / ((y - y.mean()) ** 2).sum()
+        return {'beta': beta, 'se': se, 't': t, 'R2': R2, 'resid': resid, 'SSR': SSR}
+
+    y = part1Data['MICROSOFT'].values
+    x = part1Data['EXXON_MOBIL'].values
+    X = np.column_stack((np.ones(len(x)), x))
+    res = ols_manual(y, X)
+
+    print("\n Regression Result: MICROSOFT on EXXON_MOBIL ---")
+    print(f"α̂ = {res['beta'][0]:.4f}")
+    print(f"β̂ = {res['beta'][1]:.4f}")
+    print(f"t(β) = {res['t'][1]:.2f}")
+    print(f"R² = {res['R2']:.3f}")
+
+    graphTitle = 'Microsoft vs Exxon Mobil Stock Prices'
+    fileName = '4_price_msft_xom'
+    
+    plt.figure(figsize=(10,5))
+    plt.plot(part1Data.index, part1Data['MICROSOFT'], label = 'Microsoft', color = 'steelblue')
+    plt.plot(part1Data.index, part1Data['EXXON_MOBIL'], label = 'Exxon Mobil', color = 'darkorange')
+    plt.title(graphTitle, fontweight='bold')
+    plt.xlabel("Date")
+    plt.ylabel("Price")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(f'../3/figures/{fileName}.jpeg', dpi=300)
+    plt.show()
+
+    x = part1Data['EXXON_MOBIL'].values
+    y = part1Data['MICROSOFT'].values
+    X = np.column_stack((np.ones(len(x)), x))
+    res = ols_manual(y, X) 
+    yhat = X @ res['beta']
+
+    graphTitle = 'Microsoft vs Exxon Mobil (Level Regression)'
+    fileName = '4_scatter_msft_xom'
+    
+    # Scatter Regression
+    plt.figure(figsize=(7,5))
+    plt.scatter(x, y, alpha=0.5, label="Observed")
+    plt.plot(x, yhat, color='red', label="Fitted line")
+    plt.title(graphTitle, fontweight='bold')
+    plt.xlabel("Exxon Mobil Stock Price")
+    plt.ylabel("Microsoft Stock Price")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(f'../3/figures/{fileName}.jpeg', dpi=300)
+    plt.show()
+    
 partI_question1()
 partI_question2()
 partI_question3()
+partI_question4()
 
 '''
 Part II: Cointegration and Error Correction Models
 '''
+print('\nPart II: Cointegration and Error Correction Models')
 
 # Question 1
 
@@ -423,6 +533,12 @@ def monteCarlo_Cointegrated(input_B, input_t, input_phi, input_corr):
         this_lambda_list.append(estimate_lambda)
     
     return this_beta_list, this_t_list, this_RSquare_list, this_lambda_list
+
+def cointegrationTest(inputDecision):
+    if inputDecision == 'Reject the null':
+        return 'Zt ∼I(0): cointegration between {Yt} and {Xt}'
+    else:
+        return 'Zt ∼I(1): No-cointegration between {Yt} and {Xt}'
 
 def partII_question1():
     time_list = [100, 500, 1000]
@@ -476,11 +592,11 @@ def partII_question1():
             fileName = f'5_MC_pdf_RSquare_phi_{phi}'
             xName = 'R^2'
             distributionPlot(rSquare_x_list, rSquare_density_list, time_list, xName, graphTitle, fileName)
-        
-        graphTitle = f'Distribution of Estimated λ with ɸ = {phi}'
-        fileName = f'5_MC_pdf_lambda_phi_{phi}'
-        xName = 'lambda'
-        distributionPlot(lambda_x_list, lambda_density_list, time_list, xName, graphTitle, fileName)
+        else:
+            graphTitle = f'Distribution of Estimated λ with ɸ = {phi}'
+            fileName = f'5_MC_pdf_lambda_phi_{phi}'
+            xName = 'lambda'
+            distributionPlot(lambda_x_list, lambda_density_list, time_list, xName, graphTitle, fileName)
 
 quarterly_name = part2Data['obs']
 aggregateConsumption = part2Data['CONS']
@@ -488,11 +604,11 @@ aggregateIncome = part2Data['INC']
 fourth_quarter_name = [quarter for quarter in quarterly_name if 'Q4' in quarter]
 
 def partII_question2():    
-    # Plot the graphs
+    # plot the graphs
     graphTitle = 'The quarterly aggregate consumption and aggregate income in the Netherlands'
     fileName = '6_cons_inc'
 
-    plt.figure(figsize=(10,6))    
+    plt.figure(figsize=(13,5))    
     plt.plot(quarterly_name, aggregateConsumption, 
             linewidth = 1, color = 'green', label='Aggregate consumption')
     plt.plot(quarterly_name, aggregateIncome, 
@@ -520,6 +636,145 @@ def partII_question2():
     graphTitle = 'Sample ACF of Aggregate Income'
     fileName = '6_sacf_aggInc'
     aggregateIncome_sacf = sacf(aggregateIncome, input_lags, graphTitle, fileName)
+    
+def partII_question3():
+    print('\nQuestion 3:')
+    # perform a regression of Y_t on X_t
+    matrix_X, estimate_beta, hat_y, hat_residuals_z = runRegressionModel(aggregateConsumption, aggregateIncome)
+    alpha_hat, beta_hat = estimate_beta.iloc[0,0],  estimate_beta.iloc[1,0]
+
+    print(f'\nCointegration regression: CONSUMPTION = {alpha_hat: .3f} + {beta_hat: .3f} * INCOME')
+
+    # plot the regression residuals
+    graphTitle = 'Residuals of ADF regression'
+    fileName = '7_res_ADF'
+    
+    plt.figure(figsize=(13,5))   
+    plt.plot(quarterly_name, hat_residuals_z, 
+            linewidth = 1, color = 'blue')
+    plt.axhline(0, color='black', linestyle='--', linewidth=1)
+    plt.title(graphTitle, fontweight='bold')
+    plt.xticks(quarterly_name, minor=True)
+    plt.xticks(fourth_quarter_name, minor=False, rotation=45)
+    plt.grid(True, axis='x', which='minor', 
+            linestyle='--', linewidth=0.5, color='grey')
+    plt.grid(True, axis='x', which='major', 
+            linestyle='--', linewidth=0.8, color='black')
+    plt.xlabel('Time')
+    plt.ylabel('Euros')
+    plt.savefig(f'../3/figures/{fileName}.jpeg', dpi=300)
+    plt.show()
+    
+    # diﬀerencing of Z_t
+    differenceResiduals = np.diff(hat_residuals_z.squeeze())
+    
+    # estimate the ADF regression model
+    max_p = 12  # maximum lags
+    hat_beta_list = []
+    hat_residuals_list = []
+    se_beta_list = []
+    aic_list = []
+
+    for iterateP in range(1, max_p+1):
+        matrix_X, estimate_phi, hat_y, hat_residuals = runRegressionModel_ADF(input_delta_y=differenceResiduals, 
+                                                                              input_y=hat_residuals_z.squeeze(),
+                                                                              input_p=iterateP)
+        
+        estimate_SE = getStandardError(matrix_X, hat_residuals)
+        beta_SE = estimate_SE[0]
+        se_beta_list.append(beta_SE)
+
+        lengthOfSeries = len(hat_residuals)
+        k = iterateP + 1
+        hat_beta_list.append(estimate_phi.iloc[0,0])
+        hat_residuals_list.append(hat_residuals)
+        
+        this_aic = getAIC(lengthOfSeries, k, hat_residuals.squeeze())
+        aic_list.append(float(this_aic))
+    
+    min_aic, final_p = getBestP(aic_list)
+    final_beta = hat_beta_list[final_p - 1]
+    final_residuals = hat_residuals_list[final_p - 1]
+    final_se = se_beta_list[final_p - 1]
+        
+    # compute the ADF test statistic under the null
+    adf_statistic = (final_beta) / final_se
+    print(f'ADF test statistic: {round(adf_statistic,3)}')
+
+    # perform the ADF-Conintegration test
+    decision = adf_test(0.1, adf_statistic, False)
+    cointegrated = cointegrationTest(decision)
+    print(f'Conclusion regarding cointegration at the ⍺ = 10%: {decision} and {cointegrated}')
+
+def partII_question4():
+    print('\nQuestion 4:')
+    # perform a regression of Y_t on X_t
+    matrix_X, estimate_beta, hat_y, hat_residuals_z = runRegressionModel(aggregateConsumption, aggregateIncome)
+    alpha_hat, beta_hat = estimate_beta.iloc[0,0],  estimate_beta.iloc[1,0]
+    
+    # diﬀerencing of Y_t and X_t
+    differenceConsumption = np.diff(aggregateConsumption.squeeze())
+    differenceIncome = np.diff(aggregateIncome.squeeze())
+    
+    # estimate the Error-Correction Model
+    max_p = 6   # maximum lags
+    max_q = 6   # maximum lags
+    
+    hat_coefs_list = []
+    hat_residuals_list = []
+    spec_list = []
+    aic_list = []
+    
+    for iterateP in range(1, max_p+1):
+        for iterateQ in range(1, max_q+1):      
+            matrix_X, estimate_coefficient, hat_y, hat_residuals = runRegressionModel_ECM(input_y=differenceConsumption, 
+                                                                                          input_x=differenceIncome, 
+                                                                                          input_z=hat_residuals_z.squeeze(), 
+                                                                                          input_p=iterateP, input_q=iterateQ)
+            
+            lengthOfSeries = len(hat_residuals)
+            k = iterateP + 1
+            hat_coefs_list.append(estimate_coefficient.squeeze())
+            hat_residuals_list.append(hat_residuals)
+            spec_list.append([iterateP,iterateQ])
+            
+            this_aic = getAIC(lengthOfSeries, k, hat_residuals.squeeze())
+            aic_list.append(float(this_aic))
+            
+    min_aic, final_index = getBestP(aic_list)
+    final_spec_p = spec_list[final_index - 1][0]
+    final_spec_q = spec_list[final_index - 1][1]
+    final_coefs = hat_coefs_list[final_index - 1]
+    final_gamma = final_coefs[0]
+    final_phis = final_coefs[1:(final_spec_p+1)]
+    final_betas = final_coefs[-final_spec_q:]
+    
+    # report the selected lags of the error-correction model
+    print(f'\nSelected lags of ECM by AIC: p = {final_spec_p}, q = {final_spec_q}')
+
+    # report the estimated error-correction model
+    print(f'The estimated ECM is: ΔY_t = {round(final_gamma,3)} * Z_t-1 + ', end='')
+    
+    for index, phi in enumerate(final_phis):
+            print(f'{round(phi,3)} * ΔY_t-{index+1} + ', end='')
+            
+    for index, beta in enumerate(final_betas):
+        if index != len(final_betas)-1:
+            print(f'{round(beta,3)} * ΔX_t-{index+1} + ', end='')
+        else:
+            print(f'{round(beta,3)} * ΔX_t-{index+1}')
+    
+    # report the long-run equilibrium
+    print(f'\nLong-run equilibrium of ECM is: CONSUMPTION = {alpha_hat: .3f} + {beta_hat: .3f} * INCOME')
+
+    # interpret the value of the error correction coeﬃcient
+    print(f'\nError-Correction coefficient Ɣ = {final_gamma: .3f}')
+    if final_gamma < 0:
+        print('Interpretation: Negative gamma -> Indicates correction towards long-run equilibrium (speed of adjustment).')
+    else:
+        print('Interpretation: Non-negative gamma -> No correction to equilibrium (or divergence).')
 
 partII_question1()
 partII_question2()
+partII_question3()
+partII_question4()
